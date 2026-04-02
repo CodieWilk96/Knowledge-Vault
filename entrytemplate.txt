@@ -1,0 +1,13 @@
+#Title
+Short description of entry.
+
+## Notes
+Explaination
+Key points
+Commands
+
+## Tags
+Tag1, Tag2, Tag3
+
+## Created
+MM-DD-YYYY

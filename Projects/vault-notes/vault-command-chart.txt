@@ -1,0 +1,39 @@
+﻿Vault Commands & Aliases Toolkit
+XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+
+COMMAND|ALIAS|PURPOSE
+___________________________________
+
+fresh|f|create new entry
+
+tags|t|browse tags
+
+c-log|(none)|list entries
+
+key-lookup|key|search by keyword
+
+del-tag|x|delete tag
+
+tag|T|show entries under a tag
+
+tag-cleanup|(none)|clean tag files
+
+cure|c|edit entry
+
+rid|d|delete entry
+
+ch-name|(none)|rename entry
+
+date-lookup|d^|lookup by date
+
+stats|s|show stats
+
+recent|(none)|recent entries
+
+up-index|(none)|rebuild index
+
+up-tag|(none)|rebuild tag files
+
+tweak-up|do|run all maintenance
+
+help|(none)|help
