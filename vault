@@ -1,0 +1,385 @@
+#!/bin/bash
+
+vault_main() {
+
+    # No arguments = create a new entry (quick capture)
+    if [ -z "$1" ]; then
+        new_entry
+        return
+    fi
+
+    case "$1" in
+        fresh|f) new_directory ;;
+        tags|t) browse_tags ;;
+        c-log) list_entries ;;
+        key-lookup|key) key_lookup "$2" ;;
+        help) show_help  ;;
+        del-tag|X) delete_tag "$2" ;;
+       	tag|T) tag_show "$2" ;;
+        tag-cleanup) tag_cleanup ;;
+        cure|c) edit_entry "$2" ;;
+        rid|d) delete_entry "$2" ;;
+        ch-name) rename_entry "$2" "$3" ;;
+        date-lookup|d^) date_lookup "$2" ;;
+	stats|s) vault_stats ;;
+        recent) recent_entries ;;
+        up-index) rebuild_index ;;
+        up-tag)rebuild_tags ;;
+        tweak-up|do) tweak_up ;;
+        *)
+            echo "Unknown command: $1"
+            echo "Try: vault help"
+            ;;
+    esac
+}
+############################################
+# FUNCTION DEFINITIONS (BOTTOM OF FILE)
+############################################
+
+# Create a new entry (default action)
+new_entry() {
+    read -p "Title: " TITLE
+    DATE=$(date +"%m-%d-%y")
+    FILENAME=$(echo "$TITLE" | tr ' ' '-')
+    ENTRY_PATH="$HOME/Vault/Entries/${DATE}-${FILENAME}.txt"
+
+    # Create entry from template
+    cp "$HOME/Vault/entrytemplate.txt" "$ENTRY_PATH"
+
+    # Add to index
+    echo "${DATE} ${FILENAME}" >> "$HOME/Vault/index.txt"
+
+    # Open entry for editing
+    ${EDITOR:-vim} "$ENTRY_PATH"
+
+    # Extract tags after editing
+    TAGS=$(awk '/^## Tags/{getline; print}' "$ENTRY_PATH" | sed 's/,/ /g')
+
+    for TAG in $TAGS; do
+        CLEAN_TAG=$(echo "$TAG" | xargs)
+        [ -z "$CLEAN_TAG" ] && continue
+        TAGFILE="$HOME/Vault/Tags/${CLEAN_TAG}.txt"
+        echo "${DATE} ${FILENAME}" >> "$TAGFILE"
+    done
+
+    echo "Entry created: $ENTRY_PATH"
+}
+
+# Create a new project directory
+new_directory() {
+    read -p "Title: " TITLE
+    DIRNAME=$(echo "$TITLE" | tr ' ' '-')
+    PROJECT_PATH="$HOME/Vault/Projects/${DIRNAME}"
+
+    mkdir -p "$PROJECT_PATH"
+    echo "Created project directory: $PROJECT_PATH"
+}
+
+browse_tags() {
+    TAG_DIR="$HOME/Vault/Tags"
+
+    echo "Available tags: "
+    ls "$TAG_DIR" | sed 's/.txt$//'
+}
+
+list_entries() {
+     INDEX="$HOME/Vault/index.txt"
+
+    echo "Chronological Log: "
+    cat "$INDEX"
+}
+
+key_lookup() {
+    KEYWORD="$2"
+    ENTRIES="$Home/Vault/Entries"
+
+    if [ -z "$KEYWORD" ]; then
+        echo "Usage: vault key-lookup <keyword>"
+	exit 1
+    fi
+
+    grep -Rni "$KEYWORD" "ENTRIES"
+}
+
+delete_tag() {
+    TAG="$1"
+    TAG_DIR="$HOME/Vault/Tags"
+    ENTRIES="$HOME/Vault/Entries"
+
+    if [ -z "$TAG" ]; then
+        echo "Usage: vault del-tag <tag>"
+        return
+    fi
+
+    TAGFILE="$TAG_DIR/${TAG}.txt"
+
+    if [ ! -f "$TAGFILE" ]; then
+        echo "Tag not found: $TAG"
+        return
+    fi
+
+    echo "This will permanently delete the tag '$TAG' from:"
+    echo "  - Tag directory"
+    echo "  - All entries that reference it"
+    read -p "Continue? (y/n): " CONFIRM
+
+    if [[ "$CONFIRM" != "y" ]]; then
+        echo "Cancelled."
+        return
+    fi
+
+    ############################################
+    # Remove tag from entries
+    ############################################
+    while IFS= read -r ENTRY; do
+        FILE="$ENTRIES/$ENTRY"
+
+        # Remove tag from the tag line
+        sed -i "s/\b$TAG\b//g; s/,,/,/g; s/, ,/,/g; s/^,//; s/,$//" "$FILE"
+    done < "$TAGFILE"
+
+    ############################################
+    # Delete the tag file
+    ############################################
+    rm "$TAGFILE"
+
+    echo "Tag '$TAG' deleted."
+
+    ############################################
+    # Optional: rebuild tags to clean up
+    ############################################
+    rebuild_tags
+}
+
+tag_show() {
+    TAG="$2"
+    TAGFILE="$HOME/Vault/Tags/${TAG}.txt"
+
+    if [ ! -f "$TAGFILE" ]; then
+        echo "Tag not found: $TAG"
+        exit 1
+    fi
+
+    echo "Entries under tag '$TAG':"
+    cat "$TAGFILE"
+}
+
+tag_cleanup() {
+    TAG_DIR="$HOME/Vault/Tags"
+
+    for FILE in "$TAG_DIR"/*.txt; do
+        sort -u "$FILE" -o "$FILE"
+    done
+
+    echo "Tag cleanup complete"
+}
+
+edit_entry() {
+    ENTRY="$2"
+    ENTRIES="$HOME/Vault/Entries"
+
+    FILE=$(ls "$ENTRIES" | grep -i "$ENTRY")
+
+    if [ -z "$FILE" ]; then
+        echo "Entry not found."
+        exit 1
+    fi
+
+    ${EDITOR:-vim} "$ENTRIES/$FILE"
+}
+
+delete_entry() {
+    ENTRY="$2"
+    ENTRIES="$HOME/Vault/Entries"
+    TAGS="$HOME/Vault/Tags"
+    INDEX="$HOME/Vault/index.txt"
+
+    FILE=$(ls "$ENTRIES" | grep -i "$ENTRY")
+
+    if [ -z "$FILE" ]; then
+        echo "Entry not found."
+        exit 1
+    fi
+
+    # Remove from index
+    sed -i "/$FILE/d" "$INDEX"
+
+    # Remove from tag files
+    for TAGFILE in "$TAGS"/*.txt; do
+        sed -i "/$FILE/d" "$TAGFILE"
+    done
+
+    # Delete the entry
+    rm "$ENTRIES/$FILE"
+
+    echo "Deleted entry and cleaned references: $FILE"
+}
+
+rename_entry() {
+    OLD="$2"
+    NEW="$3"
+
+    if [ -z "$OLD" ] || [ -z "$NEW" ]; then
+ 
+     	    echo "Usage: vault ch-name <old> <new>"
+        exit 1
+    fi
+
+    ENTRIES="$HOME/Vault/Entries"
+    TAGS="$HOME/Vault/Tags"
+    INDEX="$HOME/Vault/index.txt"
+
+    # Find the old file
+    OLD_FILE=$(ls "$ENTRIES" | grep -i "$OLD")
+
+    if [ -z "$OLD_FILE" ]; then
+        echo "Entry not found: $OLD"
+        exit 1
+    fi
+
+    # Extract date prefix
+    DATE_PREFIX=$(echo "$OLD_FILE" | cut -d'-' -f1-3)
+
+    # Build new filename
+    NEW_CLEAN=$(echo "$NEW" | tr ' ' '-')
+    NEW_FILE="${DATE_PREFIX}-${NEW_CLEAN}.txt"
+
+    # Rename the file
+    mv "$ENTRIES/$OLD_FILE" "$ENTRIES/$NEW_FILE"
+    echo "Renamed:"
+    echo "  $OLD_FILE"
+    echo "  → $NEW_FILE"
+
+    ############################################
+    # UPDATE INDEX
+    ############################################
+
+    sed -i "s/$OLD_FILE/$NEW_FILE/" "$INDEX"
+
+    ############################################
+    # UPDATE TAG FILES
+    ############################################
+
+    for TAGFILE in "$TAGS"/*.txt; do
+        sed -i "s/$OLD_FILE/$NEW_FILE/" "$TAGFILE"
+    done
+
+    echo "Index and tag files updated."
+}
+
+date_lookup() {
+    DATE="$2"
+    ENTRIES="$HOME/Vault/Entries"
+
+    ls "$ENTRIES" | grep "^$DATE"
+}
+
+vault_stats() {
+    ENTRIES="$HOME/Vault/Entries"
+    TAGS="$HOME/Vault/Tags"
+
+    echo "Entries: $(ls "$ENTRIES" | wc -l)"
+    echo "Tags:    $(ls "$TAGS" | wc -l)"
+}
+
+recent_entries() {
+    ENTRIES="$HOME/Vault/Entries"
+
+    ls -t "$ENTRIES" | head -n 5
+}
+
+rebuild_index() {
+    ENTRIES="$HOME/Vault/Entries"
+    INDEX="$HOME/Vault/index.txt"
+
+    ls "$ENTRIES" | sed 's/.txt$//' > "$INDEX"
+
+    echo "Index rebuilt."
+}
+
+rebuild_tags() {
+    ENTRIES="$HOME/Vault/Entries"
+    TAGS="$HOME/Vault/Tags"
+
+    echo "Rebuilding tag files..."
+
+    # Clear old tag files
+    rm -f "$TAGS"/*.txt
+
+    # Rebuild from entries
+    for FILE in "$ENTRIES"/*.txt; do
+        BASENAME=$(basename "$FILE")
+
+        # Extract tags from the entry
+        TAGS_LINE=$(awk '/^## Tags/{getline; print}' "$FILE" | sed 's/,/ /g')
+
+        for TAG in $TAGS_LINE; do
+            CLEAN_TAG=$(echo "$TAG" | xargs)
+            [ -z "$CLEAN_TAG" ] && continue
+
+            TAGFILE="$TAGS/${CLEAN_TAG}.txt"
+            echo "$BASENAME" >> "$TAGFILE"
+        done
+    done
+
+    # Sort and dedupe
+    for FILE in "$TAGS"/*.txt; do
+        sort -u "$FILE" -o "$FILE"
+    done
+
+    echo "Tag rebuild complete."
+}
+
+tweak_up() {
+    rebuild_index
+    rebuild_tags
+    tag_cleanup
+    echo "Vault maintenance complete."
+}
+
+show_help() {
+    echo "Vault Commands:"
+    echo "  vault                - create a new entry"
+    echo "  vault fresh | f      - create a new project directory"
+    echo "  vault tags  | t      - browse tags"
+    echo "  vault c-log          - list entries"
+    echo "  vault key-lookup|key - keyword search"
+    echo "  vault tag | T        - show entries under a tag"
+    echo "  vault tag-cleanup    - clean tag files"
+    echo "  vault cure | c       - edit entry"
+    echo "  vault rid  | d       - delete entry"
+    echo "  vault ch-name        - rename entry"
+    echo "  vault date-lookup|d^ - lookup by date"
+    echo "  vault stats | s      - vault statistics"
+    echo "  vault recent         - recent entries"
+    echo "  vault up-index       - rebuild index"
+    echo "  vault up-tag         - rebuild tag files"
+    echo "  vault tweak-up | do  - run all maintenance"
+}
+
+
+browse_tags() {
+  TAG_DIR="$HOME/Vault/Tags"
+
+  echo "Available Tags:"
+  echo "-----------"
+  ls "$TAG_DIR" | sed 's/.txt$//' # strip .txt for cleaner display.
+  echo "-----------"
+
+  read -p "Search tag here: " TAG
+
+  TAGFILE="$TAG_DIR/${TAG}.txt"
+
+  if [ ! -f "$TAGFILE" ]; then
+     echo "Tag not found."
+     return
+  fi
+
+  echo ""
+  echo "Tagged entries: $TAG"
+  echo "-------------"
+  cat "$TAGFILE"
+  echo "-------------"
+}
+
+vault_main "$@"
